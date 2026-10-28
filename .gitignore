@@ -1,2 +1,12 @@
-node_modules
-dist
+# Dependencies
+node_modules/
+
+# Production builds
+dist/
+
+# Rust build artifacts
+target/
+**/target/
+
+# Wasm generated artifacts (built from crates/darwin-engine)
+src/engine/
