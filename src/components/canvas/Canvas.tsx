@@ -1,0 +1,322 @@
+import { onMount, onCleanup, createSignal } from "solid-js";
+import {
+  Application,
+  Container,
+  Graphics,
+  TilingSprite,
+  Texture,
+} from "pixi.js";
+import initWasm, {
+  DarwinEngine,
+  type InitOutput,
+} from "../../engine/darwin_engine";
+import wasmUrl from "../../engine/darwin_engine_bg.wasm?url";
+import "./Canvas.scss";
+
+interface DragState {
+  isPanning: boolean;
+  draggedNodeId: number | null;
+  dragStartX: number;
+  dragStartY: number;
+  initialNodeX: number;
+  initialNodeY: number;
+  lastPointerX: number;
+  lastPointerY: number;
+}
+
+export function Canvas() {
+  let containerRef!: HTMLDivElement;
+  let canvasRef!: HTMLCanvasElement;
+
+  const [stats, setStats] = createSignal({
+    zoom: 1.0,
+    cameraX: 0,
+    cameraY: 0,
+    nodeCount: 0,
+  });
+
+  onMount(async () => {
+    let wasm: InitOutput;
+    try {
+      wasm = await initWasm({ module_or_path: wasmUrl });
+    } catch {
+      wasm = await initWasm(wasmUrl);
+    }
+
+    const engine = new DarwinEngine();
+
+    // shit to test the shi cuh
+    // these ai videos with "cuh" and mosqito with trumpet song are frying my brain
+    engine.add_node(1, 100, 100, 240, 160);
+    engine.add_node(2, 420, 140, 260, 210);
+    engine.add_node(3, 760, 280, 230, 150);
+
+    const app = new Application();
+    await app.init({
+      canvas: canvasRef,
+      resizeTo: containerRef,
+      backgroundColor: 0x0c0e14,
+      resolution: window.devicePixelRatio || 1,
+      autoDensity: true,
+      antialias: true,
+    });
+
+    // 1 draw call for dotted bg
+    const gridCanvas = document.createElement("canvas");
+    gridCanvas.width = 32;
+    gridCanvas.height = 32;
+    const gridCtx = gridCanvas.getContext("2d")!;
+    gridCtx.fillStyle = "#1e2230";
+    gridCtx.fillRect(0, 0, 1.5, 1.5);
+    const gridTexture = Texture.from(gridCanvas);
+
+    const grid = new TilingSprite({
+      texture: gridTexture,
+      width: app.screen.width,
+      height: app.screen.height,
+    });
+
+    // that's the thing that holds all world entities (nodes)
+    const world = new Container();
+    const nodesContainer = new Container();
+    world.addChild(nodesContainer);
+
+    app.stage.addChild(grid);
+    app.stage.addChild(world);
+
+    const nodeGfxMap = new Map<number, Container>();
+
+    function buildNodeCard(
+      id: number,
+      width: number,
+      height: number,
+    ): Container {
+      const card = new Container();
+      const body = new Graphics();
+
+      // rounded card
+      body.roundRect(0, 0, width, height, 8);
+      body.fill({ color: 0x151821, alpha: 0.95 });
+      body.stroke({ width: 1, color: 0x272c3d });
+
+      // header
+      body.roundRect(0, 0, width, 36, 8);
+      body.fill({ color: 0x1d2230 });
+      body.stroke({ width: 1, color: 0x2d3448 });
+
+      // accent pill
+      // note: maybe I'll remove it or refactor/reimagine it because I hate pills because ai overuses em
+      body.roundRect(12, 12, 12, 12, 3);
+      body.fill({
+        color: id === 1 ? 0x61afef : id === 2 ? 0x98c379 : 0xe5c07b,
+      });
+
+      card.addChild(body);
+      return card;
+    }
+
+    // main perfomance boost imo
+    // zero-copy sync: direct typed view over Wasm linear memory
+    function syncSceneFromBuffer() {
+      if (!engine.is_dirty()) {
+        return;
+      }
+
+      const stride = DarwinEngine.node_stride();
+      const count = engine.nodes_count();
+      const ptr = engine.nodes_ptr();
+      const buffer = new Float32Array(wasm.memory.buffer, ptr, count * stride);
+
+      for (let i = 0; i < count; i++) {
+        const offset = i * stride;
+        const id = buffer[offset + 0];
+        const x = buffer[offset + 1];
+        const y = buffer[offset + 2];
+        const w = buffer[offset + 3];
+        const h = buffer[offset + 4];
+
+        let card = nodeGfxMap.get(id);
+        if (!card) {
+          card = buildNodeCard(id, w, h);
+          nodeGfxMap.set(id, card);
+          nodesContainer.addChild(card);
+        }
+
+        card.position.set(x, y);
+      }
+
+      engine.clear_dirty();
+      syncCamera();
+    }
+
+    function syncCamera() {
+      const camX = engine.camera_x();
+      const camY = engine.camera_y();
+      const zoom = engine.zoom();
+
+      world.position.set(camX, camY);
+      world.scale.set(zoom, zoom);
+
+      grid.tilePosition.set(camX, camY);
+      grid.tileScale.set(zoom, zoom);
+
+      setStats({
+        zoom: Math.round(zoom * 100) / 100,
+        cameraX: Math.round(camX),
+        cameraY: Math.round(camY),
+        nodeCount: engine.nodes_count(),
+      });
+    }
+
+    const drag: DragState = {
+      isPanning: false,
+      draggedNodeId: null,
+      dragStartX: 0,
+      dragStartY: 0,
+      initialNodeX: 0,
+      initialNodeY: 0,
+      lastPointerX: 0,
+      lastPointerY: 0,
+    };
+
+    function onPointerDown(e: PointerEvent) {
+      drag.lastPointerX = e.clientX;
+      drag.lastPointerY = e.clientY;
+
+      //  I can't come up with how to make Space+Left work at the moment
+      if (e.button === 1) {
+        drag.isPanning = true;
+        canvasRef.setPointerCapture(e.pointerId);
+        return;
+      }
+
+      if (e.button === 0) {
+        const worldX = engine.screen_to_world_x(e.clientX);
+        const worldY = engine.screen_to_world_y(e.clientY);
+        const hitId = engine.hit_test(worldX, worldY);
+
+        if (hitId > 0) {
+          console.log("[spine] hit node card:", hitId);
+          drag.draggedNodeId = hitId;
+          drag.dragStartX = worldX;
+          drag.dragStartY = worldY;
+
+          // we use linear memory here to ensure 0 latency and remapping or whatever
+          const stride = DarwinEngine.node_stride();
+          const buffer = new Float32Array(
+            wasm.memory.buffer,
+            engine.nodes_ptr(),
+            engine.nodes_len(),
+          );
+          for (let i = 0; i < engine.nodes_count(); i++) {
+            if (Math.abs(buffer[i * stride] - hitId) < 1e-4) {
+              drag.initialNodeX = buffer[i * stride + 1];
+              drag.initialNodeY = buffer[i * stride + 2];
+              break;
+            }
+          }
+          canvasRef.setPointerCapture(e.pointerId);
+        } else {
+          drag.isPanning = true;
+          canvasRef.setPointerCapture(e.pointerId);
+        }
+      }
+    }
+
+    function onPointerMove(e: PointerEvent) {
+      if (drag.isPanning) {
+        const dx = e.clientX - drag.lastPointerX;
+        const dy = e.clientY - drag.lastPointerY;
+        drag.lastPointerX = e.clientX;
+        drag.lastPointerY = e.clientY;
+        engine.pan(dx, dy);
+        syncCamera();
+        return;
+      }
+
+      if (drag.draggedNodeId !== null) {
+        const currentWorldX = engine.screen_to_world_x(e.clientX);
+        const currentWorldY = engine.screen_to_world_y(e.clientY);
+        const deltaWorldX = currentWorldX - drag.dragStartX;
+        const deltaWorldY = currentWorldY - drag.dragStartY;
+
+        engine.move_node(
+          drag.draggedNodeId,
+          drag.initialNodeX + deltaWorldX,
+          drag.initialNodeY + deltaWorldY,
+        );
+        syncSceneFromBuffer();
+      }
+    }
+
+    function onPointerUp(e: PointerEvent) {
+      if (drag.isPanning || drag.draggedNodeId !== null) {
+        drag.isPanning = false;
+        drag.draggedNodeId = null;
+        // I really do hope that pointer capture won't explode
+        try {
+          canvasRef.releasePointerCapture(e.pointerId);
+        } catch {
+          // pointer capture may have been released natively on blur
+        }
+      }
+    }
+
+    function onWheel(e: WheelEvent) {
+      e.preventDefault();
+
+      // trackpad pinch-to-zoom sets ctrlKey; otherwise wheel zooms centered on pointer
+      const zoomFactor = e.deltaY < 0 ? 1.08 : 0.925;
+      engine.zoom_at(e.clientX, e.clientY, zoomFactor, 0.15, 3.5);
+      syncCamera();
+    }
+
+    function onResize() {
+      grid.width = app.screen.width;
+      grid.height = app.screen.height;
+    }
+
+    canvasRef.addEventListener("pointerdown", onPointerDown);
+    canvasRef.addEventListener("pointermove", onPointerMove);
+    canvasRef.addEventListener("pointerup", onPointerUp);
+    canvasRef.addEventListener("pointercancel", onPointerUp);
+    canvasRef.addEventListener("wheel", onWheel, { passive: false });
+    window.addEventListener("resize", onResize);
+
+    // init buffer projection
+    syncSceneFromBuffer();
+
+    onCleanup(() => {
+      canvasRef.removeEventListener("pointerdown", onPointerDown);
+      canvasRef.removeEventListener("pointermove", onPointerMove);
+      canvasRef.removeEventListener("pointerup", onPointerUp);
+      canvasRef.removeEventListener("pointercancel", onPointerUp);
+      canvasRef.removeEventListener("wheel", onWheel);
+      window.removeEventListener("resize", onResize);
+      app.destroy(true, { children: true, texture: true });
+      engine.free();
+    });
+  });
+
+  return (
+    <div class="darwin-canvas-root" ref={containerRef}>
+      <canvas ref={canvasRef} />
+      <div class="canvas-hud-overlay">
+        <span>
+          Zoom: <span class="hud-badge">{Math.round(stats().zoom * 100)}%</span>
+        </span>
+        <div class="hud-divider" />
+        <span>
+          Cam:{" "}
+          <span class="hud-badge">
+            {stats().cameraX}, {stats().cameraY}
+          </span>
+        </span>
+        <div class="hud-divider" />
+        <span>
+          Nodes: <span class="hud-badge">{stats().nodeCount}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
