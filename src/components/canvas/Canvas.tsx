@@ -5,6 +5,7 @@ import {
   Graphics,
   TilingSprite,
   Texture,
+  Text,
 } from "pixi.js";
 import initWasm, {
   DarwinEngine,
@@ -12,6 +13,26 @@ import initWasm, {
 } from "../../engine/darwin_engine";
 import wasmUrl from "../../engine/darwin_engine_bg.wasm?url";
 import "./Canvas.scss";
+
+interface ColumnSchema {
+  id: number;
+  name: string;
+  data_type: string;
+  is_pk: boolean;
+  is_fk: boolean;
+  is_nullable: boolean;
+}
+
+interface TableNodeSchema {
+  id: number;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  flags: number;
+  columns: ColumnSchema[];
+}
 
 interface DragState {
   isPanning: boolean;
@@ -48,13 +69,34 @@ export function Canvas() {
 
     // shit to test the shi cuh
     // these ai videos with "cuh" and mosqito with trumpet song are frying my brain
-    engine.add_node(1, 100, 100, 240, 160);
-    engine.add_node(2, 420, 140, 260, 210);
-    engine.add_node(3, 760, 280, 230, 150);
+    engine.add_table(1, "users", 80, 100, 260);
+    engine.add_column(1, 101, "id", "uuid", true, false, false);
+    engine.add_column(1, 102, "email", "varchar(255)", false, false, false);
+    engine.add_column(1, 103, "name", "varchar(100)", false, false, true);
+    engine.add_column(1, 104, "created_at", "timestamptz", false, false, false);
 
-    // Initial relationships to test dynamic port flipping and orthogonal wire routing
-    engine.add_edge(1, 1, 2, 1, 3);
-    engine.add_edge(2, 2, 3, 1, 3);
+    engine.add_table(2, "orders", 440, 120, 270);
+    engine.add_column(2, 201, "id", "uuid", true, false, false);
+    engine.add_column(2, 202, "user_id", "uuid", false, true, false);
+    engine.add_column(2, 203, "status", "varchar(32)", false, false, false);
+    engine.add_column(2, 204, "total_cents", "bigint", false, false, false);
+    engine.add_column(2, 205, "created_at", "timestamptz", false, false, false);
+
+    engine.add_table(3, "order_items", 820, 200, 270);
+    engine.add_column(3, 301, "id", "uuid", true, false, false);
+    engine.add_column(3, 302, "order_id", "uuid", false, true, false);
+    engine.add_column(3, 303, "product_id", "uuid", false, false, false);
+    engine.add_column(3, 304, "quantity", "integer", false, false, false);
+    engine.add_column(3, 305, "price_cents", "bigint", false, false, false);
+
+    // Column-level relationship connections:
+    // users.id (101) -> orders.user_id (202)
+    engine.add_edge(1, 1, 101, 2, 202, 1, 3);
+    // orders.id (201) -> order_items.order_id (302)
+    engine.add_edge(2, 2, 201, 3, 302, 1, 3);
+
+    const schema: TableNodeSchema[] = JSON.parse(engine.get_schema_json());
+    const schemaMap = new Map<number, TableNodeSchema>(schema.map((t) => [t.id, t]));
 
     const app = new Application();
     await app.init({
@@ -100,23 +142,119 @@ export function Canvas() {
     ): Container {
       const card = new Container();
       const body = new Graphics();
+      const table = schemaMap.get(id);
 
-      // rounded card chassis - darcula neutral dark
+      // Chassis: Darcula dark gray surface with subtle border
       body.roundRect(0, 0, width, height, 6);
       body.fill({ color: 0x2b2d30, alpha: 0.98 });
       body.stroke({ width: 1, color: 0x393b40 });
 
-      // table header strip
-      body.roundRect(0, 0, width, 32, 6);
+      // Table header strip (36px)
+      body.roundRect(0, 0, width, 36, 6);
       body.fill({ color: 0x313438 });
       body.stroke({ width: 1, color: 0x393b40 });
 
-      // horizontal divider between header and columns
-      body.moveTo(0, 32);
-      body.lineTo(width, 32);
+      // Header bottom divider
+      body.moveTo(0, 36);
+      body.lineTo(width, 36);
       body.stroke({ width: 1, color: 0x393b40 });
 
-      card.addChild(body);
+      // Table title
+      const title = new Text({
+        text: table?.name ?? `table_${id}`,
+        style: {
+          fontFamily:
+            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+          fontSize: 12,
+          fontWeight: "600",
+          fill: 0xdfe1e5,
+        },
+      });
+      title.position.set(12, 10);
+      card.addChild(title);
+
+      // Render column rows with PK/FK badges and data types
+      if (table?.columns) {
+        table.columns.forEach((col, i) => {
+          const rowY = 36 + i * 24;
+
+          // Subtle row divider line
+          if (i > 0) {
+            body.moveTo(10, rowY);
+            body.lineTo(width - 10, rowY);
+            body.stroke({ width: 0.5, color: 0x33363d });
+          }
+
+          let nameX = 14;
+
+          // PK badge (amber)
+          if (col.is_pk) {
+            body.roundRect(10, rowY + 4, 18, 14, 3);
+            body.fill({ color: 0x382c1f });
+            body.stroke({ width: 1, color: 0x5c4224 });
+
+            const pkText = new Text({
+              text: "PK",
+              style: {
+                fontFamily: "ui-monospace, monospace",
+                fontSize: 8,
+                fontWeight: "700",
+                fill: 0xcc7832,
+              },
+            });
+            pkText.position.set(13, rowY + 5);
+            card.addChild(pkText);
+            nameX = 34;
+          } else if (col.is_fk) {
+            // FK badge (purple)
+            body.roundRect(10, rowY + 4, 18, 14, 3);
+            body.fill({ color: 0x32233b });
+            body.stroke({ width: 1, color: 0x543663 });
+
+            const fkText = new Text({
+              text: "FK",
+              style: {
+                fontFamily: "ui-monospace, monospace",
+                fontSize: 8,
+                fontWeight: "700",
+                fill: 0x9876aa,
+              },
+            });
+            fkText.position.set(13, rowY + 5);
+            card.addChild(fkText);
+            nameX = 34;
+          }
+
+          // Column name
+          const colName = new Text({
+            text: col.name,
+            style: {
+              fontFamily:
+                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              fontSize: 11,
+              fill: col.is_pk ? 0xefb076 : 0xbcbec4,
+            },
+          });
+          colName.position.set(nameX, rowY + 5);
+          card.addChild(colName);
+
+          // Column data type (right-aligned)
+          const colType = new Text({
+            text: col.data_type,
+            style: {
+              fontFamily:
+                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              fontSize: 10,
+              fill: 0x7d818a,
+            },
+          });
+          colType.anchor.set(1, 0);
+          colType.position.set(width - 12, rowY + 5);
+          card.addChild(colType);
+        });
+      }
+
+      card.addChildAt(body, 0);
       return card;
     }
 
