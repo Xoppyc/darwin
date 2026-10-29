@@ -96,7 +96,9 @@ export function Canvas() {
     engine.add_edge(2, 2, 201, 3, 302, 1, 3);
 
     const schema: TableNodeSchema[] = JSON.parse(engine.get_schema_json());
-    const schemaMap = new Map<number, TableNodeSchema>(schema.map((t) => [t.id, t]));
+    const schemaMap = new Map<number, TableNodeSchema>(
+      schema.map((t) => [t.id, t]),
+    );
 
     const app = new Application();
     await app.init({
@@ -202,7 +204,7 @@ export function Canvas() {
                 fill: 0xcc7832,
               },
             });
-            pkText.position.set(13, rowY + 5);
+            pkText.position.set(14, rowY + 7);
             card.addChild(pkText);
             nameX = 34;
           } else if (col.is_fk) {
@@ -220,7 +222,7 @@ export function Canvas() {
                 fill: 0x9876aa,
               },
             });
-            fkText.position.set(13, rowY + 5);
+            fkText.position.set(14, rowY + 7);
             card.addChild(fkText);
             nameX = 34;
           }
