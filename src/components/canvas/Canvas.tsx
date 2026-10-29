@@ -201,22 +201,22 @@ export function Canvas() {
         edgesGraphics.lineTo(last.x, last.y);
         edgesGraphics.stroke({ width: 1.5, color: 0x5e6475, alpha: 0.9 });
 
-        // Source anchor dot (Darcula amber)
+        // anchor dot
         edgesGraphics.circle(pts[0].x, pts[0].y, 3);
         edgesGraphics.fill({ color: 0xcc7832 });
 
-        // Crow's foot marker spreading backwards along incoming wire
+        // crow foot one to many I guess
         const incomingDx = last.x - prev.x;
         const backDir = incomingDx >= 0 ? -1 : 1;
         const forkLen = 10;
         const forkSpread = 6;
 
-        // Fork prongs
+        // <
         edgesGraphics.moveTo(last.x, last.y - forkSpread);
         edgesGraphics.lineTo(last.x + backDir * forkLen, last.y);
         edgesGraphics.lineTo(last.x, last.y + forkSpread);
 
-        // Crow's foot crossbar
+        // |
         edgesGraphics.moveTo(last.x + backDir * 12, last.y - 6);
         edgesGraphics.lineTo(last.x + backDir * 12, last.y + 6);
         edgesGraphics.stroke({ width: 1.5, color: 0x9876aa });
