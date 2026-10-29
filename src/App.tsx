@@ -6,7 +6,6 @@ export default function App() {
     <div class="darwin-app-container">
       <header class="darwin-toolbar">
         <div class="brand">
-          <span class="brand-dot" />
           <span>Darwin</span>
         </div>
         <div class="meta">

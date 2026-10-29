@@ -55,7 +55,7 @@ export function Canvas() {
     await app.init({
       canvas: canvasRef,
       resizeTo: containerRef,
-      backgroundColor: 0x0c0e14,
+      backgroundColor: 0x1e1f22,
       resolution: window.devicePixelRatio || 1,
       autoDensity: true,
       antialias: true,
@@ -66,7 +66,7 @@ export function Canvas() {
     gridCanvas.width = 32;
     gridCanvas.height = 32;
     const gridCtx = gridCanvas.getContext("2d")!;
-    gridCtx.fillStyle = "#1e2230";
+    gridCtx.fillStyle = "#2d2f34";
     gridCtx.fillRect(0, 0, 1.5, 1.5);
     const gridTexture = Texture.from(gridCanvas);
 
@@ -94,22 +94,20 @@ export function Canvas() {
       const card = new Container();
       const body = new Graphics();
 
-      // rounded card
-      body.roundRect(0, 0, width, height, 8);
-      body.fill({ color: 0x151821, alpha: 0.95 });
-      body.stroke({ width: 1, color: 0x272c3d });
+      // rounded card chassis - darcula neutral dark
+      body.roundRect(0, 0, width, height, 6);
+      body.fill({ color: 0x2b2d30, alpha: 0.98 });
+      body.stroke({ width: 1, color: 0x393b40 });
 
-      // header
-      body.roundRect(0, 0, width, 36, 8);
-      body.fill({ color: 0x1d2230 });
-      body.stroke({ width: 1, color: 0x2d3448 });
+      // table header strip
+      body.roundRect(0, 0, width, 32, 6);
+      body.fill({ color: 0x313438 });
+      body.stroke({ width: 1, color: 0x393b40 });
 
-      // accent pill
-      // note: maybe I'll remove it or refactor/reimagine it because I hate pills because ai overuses em
-      body.roundRect(12, 12, 12, 12, 3);
-      body.fill({
-        color: id === 1 ? 0x61afef : id === 2 ? 0x98c379 : 0xe5c07b,
-      });
+      // horizontal divider between header and columns
+      body.moveTo(0, 32);
+      body.lineTo(width, 32);
+      body.stroke({ width: 1, color: 0x393b40 });
 
       card.addChild(body);
       return card;
