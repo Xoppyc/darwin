@@ -33,6 +33,7 @@ export function Canvas() {
     cameraX: 0,
     cameraY: 0,
     nodeCount: 0,
+    edgeCount: 0,
   });
 
   onMount(async () => {
@@ -50,6 +51,10 @@ export function Canvas() {
     engine.add_node(1, 100, 100, 240, 160);
     engine.add_node(2, 420, 140, 260, 210);
     engine.add_node(3, 760, 280, 230, 150);
+
+    // Initial relationships to test dynamic port flipping and orthogonal wire routing
+    engine.add_edge(1, 1, 2, 1, 3);
+    engine.add_edge(2, 2, 3, 1, 3);
 
     const app = new Application();
     await app.init({
@@ -78,7 +83,9 @@ export function Canvas() {
 
     // that's the thing that holds all world entities (nodes)
     const world = new Container();
+    const edgesGraphics = new Graphics();
     const nodesContainer = new Container();
+    world.addChild(edgesGraphics);
     world.addChild(nodesContainer);
 
     app.stage.addChild(grid);
@@ -143,6 +150,70 @@ export function Canvas() {
         card.position.set(x, y);
       }
 
+      // Read calculated orthogonal wires directly from Wasm edge buffer
+      edgesGraphics.clear();
+      const edgeCount = engine.edges_count();
+      const edgeStride = DarwinEngine.edge_stride();
+      const edgeBuffer = new Float32Array(
+        wasm.memory.buffer,
+        engine.edges_ptr(),
+        edgeCount * edgeStride,
+      );
+
+      for (let i = 0; i < edgeCount; i++) {
+        const offset = i * edgeStride;
+        const ptCount = edgeBuffer[offset + 1];
+        const tgtNormal = edgeBuffer[offset + 5];
+
+        const pts: Array<{ x: number; y: number }> = [];
+        const pBase = offset + 6;
+        for (let p = 0; p < ptCount; p++) {
+          pts.push({
+            x: edgeBuffer[pBase + p * 2 + 0],
+            y: edgeBuffer[pBase + p * 2 + 1],
+          });
+        }
+
+        if (pts.length < 2) continue;
+
+        // Draw orthogonal wire with 8px radius corner fillets
+        edgesGraphics.moveTo(pts[0].x, pts[0].y);
+        const radius = 8;
+        for (let p = 1; p < pts.length - 1; p++) {
+          edgesGraphics.arcTo(
+            pts[p].x,
+            pts[p].y,
+            pts[p + 1].x,
+            pts[p + 1].y,
+            radius,
+          );
+        }
+        const last = pts[pts.length - 1];
+        edgesGraphics.lineTo(last.x, last.y);
+        edgesGraphics.stroke({ width: 1.5, color: 0x5e6475, alpha: 0.9 });
+
+        // Source anchor dot (amber)
+        edgesGraphics.circle(pts[0].x, pts[0].y, 3);
+        edgesGraphics.fill({ color: 0xcc7832 });
+
+        // Crow's foot marker at target
+        // tgtNormal: outward normal from target table (-1.0 = left edge, +1.0 = right edge)
+        const forkLen = 12;
+        const forkSpread = 6;
+        const dir = tgtNormal;
+
+        // Fork prongs spreading outwards from target anchor
+        edgesGraphics.moveTo(last.x, last.y);
+        edgesGraphics.lineTo(last.x + dir * forkLen, last.y - forkSpread);
+        edgesGraphics.moveTo(last.x, last.y);
+        edgesGraphics.lineTo(last.x + dir * forkLen, last.y + forkSpread);
+
+        // Crow's foot crossbar
+        edgesGraphics.moveTo(last.x + dir * 12, last.y - 6);
+        edgesGraphics.lineTo(last.x + dir * 12, last.y + 6);
+        edgesGraphics.stroke({ width: 1.5, color: 0x9876aa });
+      }
+
       engine.clear_dirty();
       syncCamera();
     }
@@ -163,6 +234,7 @@ export function Canvas() {
         cameraX: Math.round(camX),
         cameraY: Math.round(camY),
         nodeCount: engine.nodes_count(),
+        edgeCount: engine.edges_count(),
       });
     }
 
@@ -313,6 +385,10 @@ export function Canvas() {
         <div class="hud-divider" />
         <span>
           Nodes: <span class="hud-badge">{stats().nodeCount}</span>
+        </span>
+        <div class="hud-divider" />
+        <span>
+          Edges: <span class="hud-badge">{stats().edgeCount}</span>
         </span>
       </div>
     </div>
