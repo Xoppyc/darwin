@@ -27,12 +27,12 @@ pub struct EdgeDef {
 
 // Fixed-stride edge command buffer:
 // [0] id
-// [1] point_count (4.0 or 6.0)
+// [1] point_count (always 4.0 for clean Manhattan routing)
 // [2] from_node
 // [3] to_node
 // [4] source_normal_x (-1.0 = Left, +1.0 = Right)
 // [5] target_normal_x (-1.0 = Left, +1.0 = Right)
-// [6..17] up to 6 waypoint pairs: (x0, y0, x1, y1, ..., x5, y5)
+// [6..17] waypoint pairs: (x0, y0, x1, y1, x2, y2, x3, y3, ...)
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EdgeBufferItem {
@@ -220,91 +220,58 @@ impl DarwinEngine {
         -1.0
     }
 
-    // Recompute orthogonal waypoints and dynamic port anchors entirely in Wasm
+    // Recompute orthogonal waypoints using clean, predictable Manhattan routing
     fn recompute_edges(&mut self) {
         self.edge_buffer.clear();
-        let stub: f32 = 28.0;
 
         for edge in &self.edges {
             let from_opt = self.nodes.iter().find(|n| (n.id - edge.from_node).abs() < f32::EPSILON);
             let to_opt = self.nodes.iter().find(|n| (n.id - edge.to_node).abs() < f32::EPSILON);
 
             if let (Some(from), Some(to)) = (from_opt, to_opt) {
+                let from_left = from.x;
+                let from_right = from.x + from.width;
                 let from_center_x = from.x + from.width * 0.5;
                 let from_center_y = from.y + from.height * 0.5;
+
+                let to_left = to.x;
+                let to_right = to.x + to.width;
                 let to_center_x = to.x + to.width * 0.5;
                 let to_center_y = to.y + to.height * 0.5;
 
-                // Dynamically flip ports between Left and Right edges based on relative placement
-                let (p0_x, p0_y, src_normal, pend_x, pend_y, tgt_normal) = if to_center_x >= from_center_x {
-                    (
-                        from.x + from.width,
-                        from_center_y,
-                        1.0_f32,
-                        to.x,
-                        to_center_y,
-                        -1.0_f32,
-                    )
-                } else {
-                    (
-                        from.x,
-                        from_center_y,
-                        -1.0_f32,
-                        to.x + to.width,
-                        to_center_y,
-                        1.0_f32,
-                    )
-                };
-
-                let mut pts = [0.0_f32; 12];
-                let point_count: f32;
-
-                let dx = (pend_x - p0_x) * src_normal;
-                if dx >= stub * 2.0 {
-                    // Clean horizontal separation: 4 waypoints, single middle vertical trunk
-                    let mid_x = (p0_x + pend_x) * 0.5;
-                    pts[0] = p0_x;
-                    pts[1] = p0_y;
-                    pts[2] = mid_x;
-                    pts[3] = p0_y;
-                    pts[4] = mid_x;
-                    pts[5] = pend_y;
-                    pts[6] = pend_x;
-                    pts[7] = pend_y;
-                    point_count = 4.0;
-                } else {
-                    // Overlapping or backwards: route around obstacle bounding perimeter
-                    let w1_x = p0_x + src_normal * stub;
-                    let w1_y = p0_y;
-                    let w4_x = pend_x + tgt_normal * stub;
-                    let w4_y = pend_y;
-
-                    let clear_y = if (to_center_y - from_center_y).abs() > (from.height + to.height) * 0.5 {
-                        (p0_y + pend_y) * 0.5
-                    } else if from_center_y < to_center_y {
-                        from.y.min(to.y) - 32.0
+                let (p0_x, p0_y, src_normal, pend_x, pend_y, tgt_normal, bus_x) =
+                    if to_left >= from_right {
+                        // Case A: Target is cleanly to the right
+                        let mid = (from_right + to_left) * 0.5;
+                        (from_right, from_center_y, 1.0_f32, to_left, to_center_y, -1.0_f32, mid)
+                    } else if to_right <= from_left {
+                        // Case B: Target is cleanly to the left
+                        let mid = (from_left + to_right) * 0.5;
+                        (from_left, from_center_y, -1.0_f32, to_right, to_center_y, 1.0_f32, mid)
+                    } else if to_center_x >= from_center_x {
+                        // Case C1: Horizontally overlapping/stacked, route along right side
+                        let bus = from_right.max(to_right) + 24.0;
+                        (from_right, from_center_y, 1.0_f32, to_right, to_center_y, 1.0_f32, bus)
                     } else {
-                        (from.y + from.height).max(to.y + to.height) + 32.0
+                        // Case C2: Horizontally overlapping/stacked, route along left side
+                        let bus = from_left.min(to_left) - 24.0;
+                        (from_left, from_center_y, -1.0_f32, to_left, to_center_y, -1.0_f32, bus)
                     };
 
-                    pts[0] = p0_x;
-                    pts[1] = p0_y;
-                    pts[2] = w1_x;
-                    pts[3] = w1_y;
-                    pts[4] = w1_x;
-                    pts[5] = clear_y;
-                    pts[6] = w4_x;
-                    pts[7] = clear_y;
-                    pts[8] = w4_x;
-                    pts[9] = w4_y;
-                    pts[10] = pend_x;
-                    pts[11] = pend_y;
-                    point_count = 6.0;
-                }
+                // Pure 4-point orthogonal path: P0 -> (bus, P0.y) -> (bus, Pend.y) -> Pend
+                let mut pts = [0.0_f32; 12];
+                pts[0] = p0_x;
+                pts[1] = p0_y;
+                pts[2] = bus_x;
+                pts[3] = p0_y;
+                pts[4] = bus_x;
+                pts[5] = pend_y;
+                pts[6] = pend_x;
+                pts[7] = pend_y;
 
                 self.edge_buffer.push(EdgeBufferItem {
                     id: edge.id,
-                    point_count,
+                    point_count: 4.0,
                     from_node: edge.from_node,
                     to_node: edge.to_node,
                     source_normal_x: src_normal,

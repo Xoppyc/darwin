@@ -176,41 +176,49 @@ export function Canvas() {
 
         if (pts.length < 2) continue;
 
-        // Draw orthogonal wire with 8px radius corner fillets
+        // Draw orthogonal wire with adaptive corner fillets
         edgesGraphics.moveTo(pts[0].x, pts[0].y);
-        const radius = 8;
         for (let p = 1; p < pts.length - 1; p++) {
+          const seg1 = Math.hypot(
+            pts[p].x - pts[p - 1].x,
+            pts[p].y - pts[p - 1].y,
+          );
+          const seg2 = Math.hypot(
+            pts[p + 1].x - pts[p].x,
+            pts[p + 1].y - pts[p].y,
+          );
+          const cornerRadius = Math.min(8, seg1 * 0.5, seg2 * 0.5);
           edgesGraphics.arcTo(
             pts[p].x,
             pts[p].y,
             pts[p + 1].x,
             pts[p + 1].y,
-            radius,
+            cornerRadius,
           );
         }
         const last = pts[pts.length - 1];
+        const prev = pts[pts.length - 2];
         edgesGraphics.lineTo(last.x, last.y);
         edgesGraphics.stroke({ width: 1.5, color: 0x5e6475, alpha: 0.9 });
 
-        // Source anchor dot (amber)
+        // Source anchor dot (Darcula amber)
         edgesGraphics.circle(pts[0].x, pts[0].y, 3);
         edgesGraphics.fill({ color: 0xcc7832 });
 
-        // Crow's foot marker at target
-        // tgtNormal: outward normal from target table (-1.0 = left edge, +1.0 = right edge)
-        const forkLen = 12;
+        // Crow's foot marker spreading backwards along incoming wire
+        const incomingDx = last.x - prev.x;
+        const backDir = incomingDx >= 0 ? -1 : 1;
+        const forkLen = 10;
         const forkSpread = 6;
-        const dir = tgtNormal;
 
-        // Fork prongs spreading outwards from target anchor
-        edgesGraphics.moveTo(last.x, last.y);
-        edgesGraphics.lineTo(last.x + dir * forkLen, last.y - forkSpread);
-        edgesGraphics.moveTo(last.x, last.y);
-        edgesGraphics.lineTo(last.x + dir * forkLen, last.y + forkSpread);
+        // Fork prongs
+        edgesGraphics.moveTo(last.x, last.y - forkSpread);
+        edgesGraphics.lineTo(last.x + backDir * forkLen, last.y);
+        edgesGraphics.lineTo(last.x, last.y + forkSpread);
 
         // Crow's foot crossbar
-        edgesGraphics.moveTo(last.x + dir * 12, last.y - 6);
-        edgesGraphics.lineTo(last.x + dir * 12, last.y + 6);
+        edgesGraphics.moveTo(last.x + backDir * 12, last.y - 6);
+        edgesGraphics.lineTo(last.x + backDir * 12, last.y + 6);
         edgesGraphics.stroke({ width: 1.5, color: 0x9876aa });
       }
 
